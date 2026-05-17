@@ -49,10 +49,10 @@ fun CameraApp(vm: CameraViewModel = viewModel()) {
             vm = vm,
             onBack = { vm.navigate(AppScreen.CAMERA) }
         )
-        AppScreen.GALLERY -> GalleryScreen(
-            bitmaps = state.recentCaptures,
-            onBack = { vm.navigate(AppScreen.CAMERA) }
-        )
+       AppScreen.GALLERY -> GalleryScreen(
+    captures = state.recentCaptures,
+    onBack = { vm.navigate(AppScreen.CAMERA) }
+)
     }
 }
 
@@ -408,17 +408,17 @@ private fun BoxScope.StylePadOverlay(state: CameraUiState, vm: CameraViewModel) 
                         .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
                         .pointerInput(state.style) {
                             detectTapGestures { offset ->
-                                val nx = (offset.x / size.width).coerceIn(0f, 1f)
-                                val ny = (1f - offset.y / size.height).coerceIn(0f, 1f)
+                                val nx = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+val ny = (1f - offset.y / size.height.toFloat()).coerceIn(0f, 1f)
                                 vm.setStyle(StyleProcessor.StylePoint(nx * 2f - 1f, ny * 2f - 1f))
                             }
                         }
                         .pointerInput(state.style) {
                             detectTransformGestures { _, pan, _, _ ->
-                                val curX = state.style.x / 2f + 0.5f
-                                val curY = state.style.y / 2f + 0.5f
-                                val nx = (curX + pan.x / size.width).coerceIn(0f, 1f)
-                                val ny = (curY - pan.y / size.height).coerceIn(0f, 1f)
+                                val curX = state.style.tone / 2f + 0.5f
+val curY = state.style.mood / 2f + 0.5f
+val nx = (curX + pan.x / size.width.toFloat()).coerceIn(0f, 1f)
+val ny = (curY - pan.y / size.height.toFloat()).coerceIn(0f, 1f)
                                 vm.setStyle(StyleProcessor.StylePoint(nx * 2f - 1f, ny * 2f - 1f))
                             }
                         }
@@ -435,8 +435,8 @@ private fun BoxScope.StylePadOverlay(state: CameraUiState, vm: CameraViewModel) 
                                 androidx.compose.ui.geometry.Offset(size.width, step * i), strokeWidth = 1f)
                         }
                         // dot
-                        val dotCx = (state.style.x / 2f + 0.5f) * size.width
-                        val dotCy = (1f - (state.style.y / 2f + 0.5f)) * size.height
+                        val dotCx = (state.style.tone / 2f + 0.5f) * size.width
+val dotCy = (1f - (state.style.mood / 2f + 0.5f)) * size.height
                         drawCircle(color = Color(0xFFFFD600), radius = 12f,
                             center = androidx.compose.ui.geometry.Offset(dotCx, dotCy))
                         drawCircle(color = Color.White, radius = 12f,
