@@ -47,6 +47,9 @@ class CameraController(private val context: Context) {
     var imageCapture: ImageCapture? = null
         private set
     private var cameraProvider: ProcessCameraProvider? = null
+    val sceneAnalyzer = SceneAnalyzer()
+    val portraitAnalyzer = LivePortraitAnalyzer()
+    private var currentAnalysis: ImageAnalysis? = null
 
     suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
@@ -100,8 +103,19 @@ class CameraController(private val context: Context) {
             .setJpegQuality(97)
             .build()
 
+        val analysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .build()
+            .also { it.setAnalyzer(ContextCompat.getMainExecutor(context), sceneAnalyzer) }
+        currentAnalysis = analysis
+
         provider.unbindAll()
-        camera = provider.bindToLifecycle(lifecycleOwner, selector, preview, imageCapture!!)
+        camera = provider.bindToLifecycle(lifecycleOwner, selector, preview, imageCapture!!, analysis)
+    }
+
+    fun switchToPortraitAnalyzer(portrait: Boolean) {
+        val analyzer = if (portrait) portraitAnalyzer else sceneAnalyzer
+        currentAnalysis?.setAnalyzer(ContextCompat.getMainExecutor(context), analyzer)
     }
 
     fun applyModeSettings(mode: CaptureMode) {
