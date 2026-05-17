@@ -48,7 +48,12 @@ data class CameraUiState(
     val isTimerRunning: Boolean = false,
     val showExposureSlider: Boolean = false,
     val faceCount: Int = 0,
-    val needsRebind: Boolean = false
+    val needsRebind: Boolean = false,
+    val sceneLabel: String = "Auto",
+    val autoModeActive: Boolean = true,
+    val focusX: Float = 0f,
+    val focusY: Float = 0f,
+    val showFocusRing: Boolean = false
 )
 
 class CameraViewModel(application: Application) : AndroidViewModel(application) {
@@ -61,6 +66,24 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     private var timerJob: Job? = null
 
+    init {
+        viewModelScope.launch {
+            cameraController.sceneAnalyzer.scene.collect { scene ->
+                _state.value = _state.value.copy(sceneLabel = scene.label)
+                if (_state.value.autoModeActive) {
+                    if (scene.suggestedMode != _state.value.mode) {
+                        _state.value = _state.value.copy(mode = scene.suggestedMode)
+                        cameraController.applyModeSettings(scene.suggestedMode)
+                    }
+                }
+            }
+        }
+    }
+
+    fun setAutoMode(enabled: Boolean) {
+        _state.value = _state.value.copy(autoModeActive = enabled)
+    }
+
     fun navigate(screen: AppScreen) {
         _state.value = _state.value.copy(screen = screen)
     }
@@ -68,6 +91,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     fun setMode(mode: CaptureMode) {
         _state.value = _state.value.copy(mode = mode)
         cameraController.applyModeSettings(mode)
+        cameraController.switchToPortraitAnalyzer(mode == CaptureMode.PORTRAIT)
     }
 
     fun setStyle(style: StyleProcessor.StylePoint) {
@@ -109,7 +133,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     fun tapToFocus(x: Float, y: Float, w: Int, h: Int) {
         cameraController.tapToFocus(x, y, w, h)
-        _state.value = _state.value.copy(showExposureSlider = true)
+        _state.value = _state.value.copy(
+            showExposureSlider = true,
+            focusX = x,
+            focusY = y,
+            showFocusRing = true
+        )
+        viewModelScope.launch {
+            delay(1800)
+            _state.value = _state.value.copy(showFocusRing = false)
+        }
     }
 
     fun setExposure(index: Int) {
