@@ -1,0 +1,3 @@
+-keep class com.google.mlkit.** { *; }
+-keep class com.hebert.motocamera.** { *; }
+-dontwarn com.google.mlkit.**
