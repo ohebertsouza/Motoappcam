@@ -1,13 +1,11 @@
 package com.hebert.motocamera.camera
 
 import android.content.Context
-import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.TonemapCurve
 import android.util.Range
 import android.util.Size
 import androidx.camera.camera2.interop.Camera2CameraControl
-import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.core.*
@@ -49,7 +47,6 @@ class CameraController(private val context: Context) {
     var imageCapture: ImageCapture? = null
         private set
     private var cameraProvider: ProcessCameraProvider? = null
-    private var currentLensFacing = CameraSelector.LENS_FACING_BACK
 
     suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
@@ -60,7 +57,6 @@ class CameraController(private val context: Context) {
     ) {
         val provider = getCameraProvider()
         cameraProvider = provider
-        currentLensFacing = lensFacing
 
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
 
@@ -69,13 +65,122 @@ class CameraController(private val context: Context) {
                 AspectRatioStrategy(aspectRatio.ratio, AspectRatioStrategy.FALLBACK_RULE_AUTO)
             )
             .setResolutionStrategy(
-                ResolutionStrategy(resolution.targetSize, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
+                ResolutionStrategy(
+                    resolution.targetSize,
+                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                )
             )
             .build()
 
         val previewBuilder = Preview.Builder().setResolutionSelector(resolutionSelector)
 
-        val sCurve = floatArrayOf(0f,0f, 0.1f,0.08f, 0.25f,0.22f, 0.5f,0.54f, 0.75f,0.82f, 0.9f,0.95f, 1f,1f)
+        val sCurve = floatArrayOf(
+            0f, 0f, 0.1f, 0.08f, 0.25f, 0.22f,
+            0.5f, 0.54f, 0.75f, 0.82f, 0.9f, 0.95f, 1f, 1f
+        )
         try {
             Camera2Interop.Extender(previewBuilder)
-                .setCaptureRequestOption(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONE
+                .setCaptureRequestOption(
+                    CaptureRequest.TONEMAP_MODE,
+                    CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE
+                )
+                .setCaptureRequestOption(
+                    CaptureRequest.TONEMAP_CURVE,
+                    TonemapCurve(sCurve, sCurve, sCurve)
+                )
+        } catch (e: Exception) { }
+
+        val preview = previewBuilder.build().also {
+            it.setSurfaceProvider(previewView.surfaceProvider)
+        }
+
+        imageCapture = ImageCapture.Builder()
+            .setResolutionSelector(resolutionSelector)
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setJpegQuality(97)
+            .build()
+
+        provider.unbindAll()
+        camera = provider.bindToLifecycle(lifecycleOwner, selector, preview, imageCapture!!)
+    }
+
+    fun applyModeSettings(mode: CaptureMode) {
+        val cam = camera ?: return
+        val control = Camera2CameraControl.from(cam.cameraControl)
+        val options = CaptureRequestOptions.Builder().apply {
+            when (mode) {
+                CaptureMode.NIGHT -> {
+                    setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+                    setCaptureRequestOption(CaptureRequest.SHADING_MODE, CaptureRequest.SHADING_MODE_HIGH_QUALITY)
+                }
+                CaptureMode.HDR -> {
+                    setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY)
+                }
+                CaptureMode.PORTRAIT -> {
+                    setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+                    setCaptureRequestOption(CaptureRequest.STATISTICS_FACE_DETECT_MODE, CaptureRequest.STATISTICS_FACE_DETECT_MODE_FULL)
+                }
+                CaptureMode.AUTO -> {
+                    setCaptureRequestOption(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_FAST)
+                }
+            }
+        }.build()
+        control.setCaptureRequestOptions(options)
+    }
+
+    fun applyWhiteBalance(wb: WhiteBalance) {
+        val cam = camera ?: return
+        val control = Camera2CameraControl.from(cam.cameraControl)
+        val options = CaptureRequestOptions.Builder()
+            .setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, wb.awbMode)
+            .build()
+        control.setCaptureRequestOptions(options)
+    }
+
+    fun applyExposureCompensation(ev: Int) {
+        camera?.cameraControl?.setExposureCompensationIndex(ev)
+    }
+
+    fun getExposureRange(): Range<Int>? {
+        val cam = camera ?: return null
+        return cam.cameraInfo.exposureState.exposureCompensationRange
+    }
+
+    fun setZoom(ratio: Float) {
+        camera?.cameraControl?.setZoomRatio(ratio)
+    }
+
+    fun setFlash(mode: Int) {
+        imageCapture?.flashMode = mode
+    }
+
+    fun tapToFocus(x: Float, y: Float, surfaceWidth: Int, surfaceHeight: Int) {
+        val factory = SurfaceOrientedMeteringPointFactory(
+            surfaceWidth.toFloat(), surfaceHeight.toFloat()
+        )
+        val point = factory.createPoint(x * surfaceWidth, y * surfaceHeight)
+        val action = FocusMeteringAction.Builder(point)
+            .addPoint(point, FocusMeteringAction.FLAG_AE)
+            .build()
+        camera?.cameraControl?.startFocusAndMetering(action)
+    }
+
+    suspend fun captureImage(executor: Executor): ImageProxy =
+        suspendCancellableCoroutine { cont ->
+            imageCapture?.takePicture(executor, object : ImageCapture.OnImageCapturedCallback() {
+                override fun onCaptureSuccess(image: ImageProxy) = cont.resume(image)
+                override fun onError(exception: ImageCaptureException) =
+                    cont.resumeWithException(exception)
+            }) ?: cont.resumeWithException(IllegalStateException("Camera not initialized"))
+        }
+
+    private suspend fun getCameraProvider(): ProcessCameraProvider =
+        suspendCancellableCoroutine { cont ->
+            ProcessCameraProvider.getInstance(context).also { future ->
+                future.addListener(
+                    { cont.resume(future.get()) },
+                    ContextCompat.getMainExecutor(context)
+                )
+            }
+        }
+}
