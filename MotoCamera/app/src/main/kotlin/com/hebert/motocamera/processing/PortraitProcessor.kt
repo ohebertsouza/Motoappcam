@@ -20,10 +20,17 @@ object PortraitProcessor {
             .build()
     )
 
-    suspend fun process(bitmap: Bitmap, blurRadius: Float = 18f): Bitmap =
+    suspend fun process(bitmap: Bitmap, blurRadius: Float = 22f): Bitmap =
         withContext(Dispatchers.Default) {
-            val mask = getSegmentationMask(bitmap)
-            applyPortraitBlur(bitmap, mask.first, mask.second, mask.third, blurRadius)
+            val scale = 0.4f
+            val small = Bitmap.createScaledBitmap(
+                bitmap,
+                (bitmap.width * scale).toInt(),
+                (bitmap.height * scale).toInt(),
+                false
+            )
+            val (mask, mW, mH) = getSegmentationMask(small)
+            applyPortraitBlur(bitmap, mask, mW, mH, blurRadius.toInt())
         }
 
     private suspend fun getSegmentationMask(bitmap: Bitmap): Triple<FloatArray, Int, Int> =
@@ -31,99 +38,99 @@ object PortraitProcessor {
             val image = InputImage.fromBitmap(bitmap, 0)
             segmenter.process(image)
                 .addOnSuccessListener { result: SegmentationMask ->
-                    val buffer = result.buffer
-                    val maskWidth = result.width
-                    val maskHeight = result.height
-                    val mask = FloatArray(maskWidth * maskHeight)
-                    buffer.rewind()
-                    buffer.asFloatBuffer().get(mask)
-                    cont.resume(Triple(mask, maskWidth, maskHeight))
+                    val buf = result.buffer
+                    val mW = result.width
+                    val mH = result.height
+                    val mask = FloatArray(mW * mH)
+                    buf.rewind()
+                    buf.asFloatBuffer().get(mask)
+                    cont.resume(Triple(mask, mW, mH))
                 }
                 .addOnFailureListener { e -> cont.resumeWithException(e) }
         }
 
     private fun applyPortraitBlur(
-        original: Bitmap,
-        mask: FloatArray,
-        maskW: Int,
-        maskH: Int,
-        radius: Float
+        original: Bitmap, mask: FloatArray, maskW: Int, maskH: Int, radius: Int
     ): Bitmap {
-        val width = original.width
-        val height = original.height
-
-        val blurred = stackBlur(original, radius.toInt())
-        val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val maskX = (x.toFloat() / width * maskW).toInt().coerceIn(0, maskW - 1)
-                val maskY = (y.toFloat() / height * maskH).toInt().coerceIn(0, maskH - 1)
-                val confidence = mask[maskY * maskW + maskX]
-
-                val alpha = smoothStep(0.35f, 0.65f, confidence)
-                val origPx = original.getPixel(x, y)
-                val blurPx = blurred.getPixel(x, y)
-
-                val r = lerp(Color.red(blurPx), Color.red(origPx), alpha)
-                val g = lerp(Color.green(blurPx), Color.green(origPx), alpha)
-                val b = lerp(Color.blue(blurPx), Color.blue(origPx), alpha)
-
-                result.setPixel(x, y, Color.rgb(r, g, b))
+        val w = original.width
+        val h = original.height
+        val blurred = stackBlur(original, radius)
+        val origPx = IntArray(w * h)
+        val blurPx = IntArray(w * h)
+        val result = IntArray(w * h)
+        original.getPixels(origPx, 0, w, 0, 0, w, h)
+        blurred.getPixels(blurPx, 0, w, 0, 0, w, h)
+        for (y in 0 until h) {
+            for (x in 0 until w) {
+                val mX = (x.toFloat() / w * maskW).toInt().coerceIn(0, maskW - 1)
+                val mY = (y.toFloat() / h * maskH).toInt().coerceIn(0, maskH - 1)
+                val conf = mask[mY * maskW + mX]
+                val t = smoothStep(0.35f, 0.65f, conf)
+                val idx = y * w + x
+                result[idx] = blendPixels(blurPx[idx], origPx[idx], t)
             }
         }
-
-        return result
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(result, 0, w, 0, 0, w, h)
+        return out
     }
 
-    private fun stackBlur(src: Bitmap, radius: Int): Bitmap {
-        val r = radius.coerceAtLeast(1)
-        val bmp = src.copy(Bitmap.Config.ARGB_8888, true)
-        val w = bmp.width
-        val h = bmp.height
+    fun stackBlur(src: Bitmap, radius: Int): Bitmap {
+        val r = radius.coerceIn(1, 100)
+        val w = src.width
+        val h = src.height
         val pixels = IntArray(w * h)
-        bmp.getPixels(pixels, 0, w, 0, 0, w, h)
-
+        src.getPixels(pixels, 0, w, 0, 0, w, h)
+        val tmp = pixels.copyOf()
         for (y in 0 until h) {
-            var rSum = 0; var gSum = 0; var bSum = 0; val count = r * 2 + 1
+            var rS = 0; var gS = 0; var bS = 0
+            val count = r * 2 + 1
             for (kx in -r..r) {
-                val px = pixels[y * w + kx.coerceIn(0, w - 1)]
-                rSum += Color.red(px); gSum += Color.green(px); bSum += Color.blue(px)
+                val p = tmp[y * w + kx.coerceIn(0, w - 1)]
+                rS += Color.red(p); gS += Color.green(p); bS += Color.blue(p)
             }
             for (x in 0 until w) {
-                pixels[y * w + x] = Color.rgb(rSum / count, gSum / count, bSum / count)
-                val removePx = src.getPixel((x - r).coerceIn(0, w - 1), y)
-                val addPx = src.getPixel((x + r + 1).coerceIn(0, w - 1), y)
-                rSum += Color.red(addPx) - Color.red(removePx)
-                gSum += Color.green(addPx) - Color.green(removePx)
-                bSum += Color.blue(addPx) - Color.blue(removePx)
+                pixels[y * w + x] = Color.rgb(rS / count, gS / count, bS / count)
+                val rem = tmp[y * w + (x - r).coerceIn(0, w - 1)]
+                val add = tmp[y * w + (x + r + 1).coerceIn(0, w - 1)]
+                rS += Color.red(add) - Color.red(rem)
+                gS += Color.green(add) - Color.green(rem)
+                bS += Color.blue(add) - Color.blue(rem)
             }
         }
-
+        val tmp2 = pixels.copyOf()
         for (x in 0 until w) {
-            var rSum = 0; var gSum = 0; var bSum = 0; val count = r * 2 + 1
+            var rS = 0; var gS = 0; var bS = 0
+            val count = r * 2 + 1
             for (ky in -r..r) {
-                val px = pixels[ky.coerceIn(0, h - 1) * w + x]
-                rSum += Color.red(px); gSum += Color.green(px); bSum += Color.blue(px)
+                val p = tmp2[ky.coerceIn(0, h - 1) * w + x]
+                rS += Color.red(p); gS += Color.green(p); bS += Color.blue(p)
             }
             for (y in 0 until h) {
-                pixels[y * w + x] = Color.rgb(rSum / count, gSum / count, bSum / count)
-                val removePx = pixels[(y - r).coerceIn(0, h - 1) * w + x]
-                val addPx = pixels[(y + r + 1).coerceIn(0, h - 1) * w + x]
-                rSum += Color.red(addPx) - Color.red(removePx)
-                gSum += Color.green(addPx) - Color.green(removePx)
-                bSum += Color.blue(addPx) - Color.blue(removePx)
+                pixels[y * w + x] = Color.rgb(rS / count, gS / count, bS / count)
+                val rem = tmp2[(y - r).coerceIn(0, h - 1) * w + x]
+                val add = tmp2[(y + r + 1).coerceIn(0, h - 1) * w + x]
+                rS += Color.red(add) - Color.red(rem)
+                gS += Color.green(add) - Color.green(rem)
+                bS += Color.blue(add) - Color.blue(rem)
             }
         }
-
-        bmp.setPixels(pixels, 0, w, 0, 0, w, h)
-        return bmp
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(pixels, 0, w, 0, 0, w, h)
+        return out
     }
 
-    private fun smoothStep(edge0: Float, edge1: Float, x: Float): Float {
-        val t = ((x - edge0) / (edge1 - edge0)).coerceIn(0f, 1f)
+    private fun blendPixels(bg: Int, fg: Int, t: Float): Int = Color.argb(
+        255,
+        lerp(Color.red(bg), Color.red(fg), t),
+        lerp(Color.green(bg), Color.green(fg), t),
+        lerp(Color.blue(bg), Color.blue(fg), t)
+    )
+
+    private fun smoothStep(e0: Float, e1: Float, x: Float): Float {
+        val t = ((x - e0) / (e1 - e0)).coerceIn(0f, 1f)
         return t * t * (3 - 2 * t)
     }
 
-    private fun lerp(a: Int, b: Int, t: Float): Int = (a + (b - a) * t).toInt().coerceIn(0, 255)
+    private fun lerp(a: Int, b: Int, t: Float) = (a + (b - a) * t).toInt().coerceIn(0, 255)
 }
