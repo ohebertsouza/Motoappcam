@@ -3,7 +3,6 @@ package com.hebert.motocamera.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import androidx.camera.core.CameraSelector
 import androidx.camera.view.PreviewView
 import androidx.compose.animation.*
 import androidx.compose.foundation.*
@@ -18,7 +17,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -44,8 +43,15 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
     ) == PackageManager.PERMISSION_GRANTED
 
     if (!hasPermission) {
-        Box(Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-            Text("Permissão de câmera necessária.\nReinicie o app.", color = Color.White, textAlign = TextAlign.Center)
+        Box(
+            Modifier.fillMaxSize().background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "Permissão de câmera necessária.\nReinicie o app.",
+                color = Color.White,
+                textAlign = TextAlign.Center
+            )
         }
         return
     }
@@ -58,7 +64,6 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // Camera preview
         AndroidView(
             factory = { previewView },
             modifier = Modifier.fillMaxSize().pointerInput(Unit) {
@@ -68,14 +73,12 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
             }
         )
 
-        // Top controls
         TopBar(
             flashEnabled = state.flashEnabled,
             onFlashToggle = vm::toggleFlash,
             modifier = Modifier.align(Alignment.TopCenter).fillMaxWidth().padding(top = 16.dp)
         )
 
-        // Bottom panel
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
@@ -83,10 +86,8 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                 .background(Color.Black.copy(alpha = 0.6f))
                 .padding(bottom = 24.dp)
         ) {
-            // Style pad (collapsible)
             AnimatedVisibility(visible = state.showStylePad) {
                 Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    // Preset chips
                     LazyRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
@@ -113,7 +114,6 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
 
             Spacer(Modifier.height(8.dp))
 
-            // Mode selector
             ModeSelector(
                 currentMode = state.mode,
                 onModeSelect = vm::setMode,
@@ -122,15 +122,15 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
 
             Spacer(Modifier.height(16.dp))
 
-            // Capture row
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Thumbnail
                 Box(
-                    Modifier.size(56.dp).clip(RoundedCornerShape(12.dp))
+                    Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(12.dp))
                         .background(Color.DarkGray)
                         .clickable { if (state.lastCapture != null) vm.dismissPreview() },
                     contentAlignment = Alignment.Center
@@ -140,32 +140,30 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
                     }
                 }
 
-                // Shutter button
                 ShutterButton(
                     isCapturing = state.isCapturing,
                     mode = state.mode,
                     onClick = vm::capture
                 )
 
-                // Style + flip column
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     IconButton(
                         onClick = vm::toggleStylePad,
                         modifier = Modifier
                             .size(44.dp)
                             .background(
-                                if (state.showStylePad) Color.White.copy(alpha = 0.2f) else Color.Transparent,
+                                if (state.showStylePad) Color.White.copy(alpha = 0.2f)
+                                else Color.Transparent,
                                 CircleShape
                             )
                     ) {
-                        Text("✦", color = Color.White, fontSize = 20.sp)
+                        Text(text = "✦", color = Color.White, fontSize = 20.sp)
                     }
-                    Text("Estilo", color = Color.White, fontSize = 10.sp)
+                    Text(text = "Estilo", color = Color.White, fontSize = 10.sp)
                 }
             }
         }
 
-        // Photo preview overlay
         if (state.showPreview && state.lastCapture != null) {
             PhotoPreviewOverlay(
                 bitmap = state.lastCapture!!,
@@ -173,14 +171,16 @@ fun CameraScreen(vm: CameraViewModel = viewModel()) {
             )
         }
 
-        // Error snackbar
         state.errorMessage?.let { msg ->
-            Box(Modifier.fillMaxSize().padding(bottom = 120.dp), contentAlignment = Alignment.BottomCenter) {
+            Box(
+                Modifier.fillMaxSize().padding(bottom = 120.dp),
+                contentAlignment = Alignment.BottomCenter
+            ) {
                 Card(
                     Modifier.padding(horizontal = 24.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFFB71C1C))
                 ) {
-                    Text(msg, color = Color.White, Modifier.padding(12.dp))
+                    Text(text = msg, color = Color.White, modifier = Modifier.padding(12.dp))
                 }
             }
             LaunchedEffect(msg) {
@@ -197,11 +197,24 @@ private fun TopBar(
     onFlashToggle: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Row(modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+    Row(
+        modifier.padding(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
         IconButton(onClick = onFlashToggle) {
-            Text(if (flashEnabled) "⚡" else "⚡", color = if (flashEnabled) Color.Yellow else Color.White, fontSize = 22.sp)
+            Text(
+                text = if (flashEnabled) "⚡ ON" else "⚡",
+                color = if (flashEnabled) Color(0xFFFFD600) else Color.White,
+                fontSize = 16.sp
+            )
         }
-        Text("MotoCamera", color = Color.White, fontWeight = FontWeight.Light, fontSize = 16.sp, modifier = Modifier.align(Alignment.CenterVertically))
+        Text(
+            text = "MotoCamera",
+            color = Color.White,
+            fontWeight = FontWeight.Light,
+            fontSize = 16.sp,
+            modifier = Modifier.align(Alignment.CenterVertically)
+        )
         Spacer(Modifier.size(48.dp))
     }
 }
@@ -224,17 +237,23 @@ private fun ModeSelector(
             val selected = currentMode == mode
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.clickable { onModeSelect(mode) }.padding(horizontal = 12.dp, vertical = 4.dp)
+                modifier = Modifier
+                    .clickable { onModeSelect(mode) }
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
             ) {
                 Text(
-                    label,
+                    text = label,
                     color = if (selected) Color(0xFFFFD600) else Color.White.copy(alpha = 0.6f),
                     fontSize = 12.sp,
                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                 )
                 if (selected) {
                     Spacer(Modifier.height(2.dp))
-                    Box(Modifier.size(4.dp, 2.dp).background(Color(0xFFFFD600), RoundedCornerShape(1.dp)))
+                    Box(
+                        Modifier
+                            .size(4.dp, 2.dp)
+                            .background(Color(0xFFFFD600), RoundedCornerShape(1.dp))
+                    )
                 }
             }
         }
@@ -263,9 +282,18 @@ private fun ShutterButton(
         contentAlignment = Alignment.Center
     ) {
         if (isCapturing) {
-            CircularProgressIndicator(Modifier.size(36.dp), color = modeColor, strokeWidth = 3.dp)
+            CircularProgressIndicator(
+                modifier = Modifier.size(36.dp),
+                color = modeColor,
+                strokeWidth = 3.dp
+            )
         } else {
-            Box(Modifier.size(60.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.95f)))
+            Box(
+                Modifier
+                    .size(60.dp)
+                    .clip(CircleShape)
+                    .background(Color.White.copy(alpha = 0.95f))
+            )
         }
     }
 }
@@ -280,7 +308,7 @@ private fun PresetChip(name: String, selected: Boolean, onClick: () -> Unit) {
             .padding(horizontal = 14.dp, vertical = 6.dp)
     ) {
         Text(
-            name,
+            text = name,
             color = if (selected) Color.Black else Color.White,
             fontSize = 11.sp,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
@@ -292,14 +320,19 @@ private fun PresetChip(name: String, selected: Boolean, onClick: () -> Unit) {
 private fun StyleValues(style: StyleProcessor.StylePoint) {
     val tonePct = (style.tone * 100).toInt()
     val moodPct = (style.mood * 100).toInt()
-    Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.SpaceAround) {
+    Row(
+        Modifier.fillMaxWidth().padding(top = 6.dp),
+        horizontalArrangement = Arrangement.SpaceAround
+    ) {
         Text(
-            "Tom: ${if (tonePct >= 0) "+$tonePct" else "$tonePct"}",
-            color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp
+            text = "Tom: ${if (tonePct >= 0) "+$tonePct" else "$tonePct"}",
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 11.sp
         )
         Text(
-            "Humor: ${if (moodPct >= 0) "+$moodPct" else "$moodPct"}",
-            color = Color.White.copy(alpha = 0.7f), fontSize = 11.sp
+            text = "Humor: ${if (moodPct >= 0) "+$moodPct" else "$moodPct"}",
+            color = Color.White.copy(alpha = 0.7f),
+            fontSize = 11.sp
         )
     }
 }
@@ -307,20 +340,33 @@ private fun StyleValues(style: StyleProcessor.StylePoint) {
 @Composable
 private fun PhotoPreviewOverlay(bitmap: Bitmap, onDismiss: () -> Unit) {
     Box(
-        Modifier.fillMaxSize().background(Color.Black).clickable(onClick = onDismiss),
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .clickable(onClick = onDismiss),
         contentAlignment = Alignment.Center
     ) {
         Image(
-            bitmap.asImageBitmap(),
+            bitmap = bitmap.asImageBitmap(),
             contentDescription = "Foto capturada",
             modifier = Modifier.fillMaxSize()
         )
         Box(Modifier.align(Alignment.TopEnd).padding(16.dp)) {
-            Text("✕", color = Color.White, fontSize = 24.sp,
-                modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), CircleShape).padding(8.dp))
+            Text(
+                text = "✕",
+                color = Color.White,
+                fontSize = 24.sp,
+                modifier = Modifier
+                    .background(Color.Black.copy(alpha = 0.4f), CircleShape)
+                    .padding(8.dp)
+            )
         }
         Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp)) {
-            Text("Toque para fechar", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+            Text(
+                text = "Toque para fechar",
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 13.sp
+            )
         }
     }
 }
