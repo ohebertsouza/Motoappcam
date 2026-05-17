@@ -1,14 +1,11 @@
 package com.hebert.motocamera.ui
 
 import android.graphics.Bitmap
-import android.view.ViewGroup
+import android.view.ViewGroup.LayoutParams.MATCH_PARENT
+import androidx.camera.core.CameraSelector
 import androidx.camera.view.PreviewView
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -35,7 +32,6 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -48,57 +44,54 @@ fun CameraApp(vm: CameraViewModel = viewModel()) {
     val state by vm.state.collectAsState()
     when (state.screen) {
         AppScreen.CAMERA -> CameraScreen(vm)
-        AppScreen.SETTINGS -> SettingsScreen(vm)
-        AppScreen.GALLERY -> GalleryScreen(vm)
+        AppScreen.SETTINGS -> SettingsScreen(
+            state = state,
+            vm = vm,
+            onBack = { vm.navigate(AppScreen.CAMERA) }
+        )
+        AppScreen.GALLERY -> GalleryScreen(
+            bitmaps = state.recentCaptures,
+            onBack = { vm.navigate(AppScreen.CAMERA) }
+        )
     }
 }
 
 @Composable
 fun CameraScreen(vm: CameraViewModel) {
     val state by vm.state.collectAsState()
-    val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
 
     var surfaceW by remember { mutableStateOf(1) }
     var surfaceH by remember { mutableStateOf(1) }
+    var previewView by remember { mutableStateOf<PreviewView?>(null) }
 
     val portraitFrame by vm.cameraController.portraitAnalyzer.frame.collectAsState()
 
-    LaunchedEffect(state.lensFacing, state.resolution, state.aspectRatio, state.needsRebind) {
-        vm.cameraController.bindCamera(
-            lifecycleOwner,
-            PreviewView(context).apply {
-                layoutParams = ViewGroup.LayoutParams(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
-                scaleType = PreviewView.ScaleType.FILL_CENTER
-            },
-            state.lensFacing,
-            state.resolution,
-            state.aspectRatio
-        )
-        vm.onRebindComplete()
-        vm.updateExposureRange()
+    LaunchedEffect(previewView, state.lensFacing, state.resolution, state.aspectRatio, state.needsRebind) {
+        val pv = previewView ?: return@LaunchedEffect
+        try {
+            vm.cameraController.bindCamera(
+                lifecycleOwner, pv,
+                state.lensFacing, state.resolution, state.aspectRatio
+            )
+            vm.onRebindComplete()
+            vm.updateExposureRange()
+        } catch (e: Exception) { }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
 
-        // Camera preview
         AndroidView(
             factory = { ctx ->
                 PreviewView(ctx).apply {
-                    layoutParams = ViewGroup.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
+                    layoutParams = android.view.ViewGroup.LayoutParams(MATCH_PARENT, MATCH_PARENT)
                     scaleType = PreviewView.ScaleType.FILL_CENTER
-                }
+                }.also { previewView = it }
             },
             modifier = Modifier
                 .fillMaxSize()
                 .graphicsLayer {
-                    if (state.lensFacing == androidx.camera.core.CameraSelector.LENS_FACING_FRONT
+                    if (state.lensFacing == CameraSelector.LENS_FACING_FRONT
                         && state.mirrorFrontCamera) scaleX = -1f
                 }
                 .onSizeChanged { surfaceW = it.width; surfaceH = it.height }
@@ -109,21 +102,9 @@ fun CameraScreen(vm: CameraViewModel) {
                 }
                 .pointerInput(Unit) {
                     detectTapGestures { offset ->
-                        val nx = offset.x / surfaceW
-                        val ny = offset.y / surfaceH
                         vm.tapToFocus(offset.x, offset.y, surfaceW, surfaceH)
                     }
-                },
-            update = { view ->
-                kotlinx.coroutines.runBlocking {
-                    try {
-                        vm.cameraController.bindCamera(
-                            lifecycleOwner, view,
-                            state.lensFacing, state.resolution, state.aspectRatio
-                        )
-                    } catch (e: Exception) { }
                 }
-            }
         )
 
         // Live portrait overlay
@@ -136,7 +117,7 @@ fun CameraScreen(vm: CameraViewModel) {
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer {
-                            if (state.lensFacing == androidx.camera.core.CameraSelector.LENS_FACING_FRONT
+                            if (state.lensFacing == CameraSelector.LENS_FACING_FRONT
                                 && state.mirrorFrontCamera) scaleX = -1f
                         }
                 )
@@ -145,39 +126,32 @@ fun CameraScreen(vm: CameraViewModel) {
 
         // Focus ring
         if (state.showFocusRing) {
-            FocusRing(x = state.focusX / surfaceW, y = state.focusY / surfaceH)
+            FocusRing(
+                x = state.focusX / surfaceW.toFloat(),
+                y = state.focusY / surfaceH.toFloat()
+            )
         }
 
-        // Top bar
         TopBar(state, vm)
-
-        // Mode selector
         ModeSelector(state, vm)
-
-        // Bottom controls
         BottomControls(state, vm)
 
-        // Exposure slider
         if (state.showExposureSlider) {
             ExposureSlider(state, vm)
         }
 
-        // Timer countdown
         if (state.isTimerRunning) {
             TimerOverlay(state.timerCountdown)
         }
 
-        // Preview overlay
         if (state.showPreview && state.lastCapture != null) {
             CapturePreviewOverlay(state.lastCapture!!, vm)
         }
 
-        // Style pad
         if (state.showStylePad) {
             StylePadOverlay(state, vm)
         }
 
-        // Error
         state.errorMessage?.let { msg ->
             Snackbar(
                 modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
@@ -197,41 +171,25 @@ private fun BoxScope.TopBar(state: CameraUiState, vm: CameraViewModel) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Flash
         GlassPill(modifier = Modifier.size(44.dp)) {
             IconButton(onClick = { vm.toggleFlash() }) {
-                Text(
-                    text = if (state.flashEnabled) "⚡" else "☁",
-                    fontSize = 18.sp
-                )
+                Text(text = if (state.flashEnabled) "⚡" else "☁", fontSize = 18.sp)
             }
         }
 
-        // Scene badge
         GlassPill {
             Row(
                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = state.sceneLabel,
-                    color = Color.White,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Text(text = state.sceneLabel, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 if (state.autoModeActive) {
-                    Text(
-                        text = "AUTO",
-                        color = Color(0xFFFFD600),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text(text = "AUTO", color = Color(0xFFFFD600), fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
 
-        // Settings
         GlassPill(modifier = Modifier.size(44.dp)) {
             IconButton(onClick = { vm.navigate(AppScreen.SETTINGS) }) {
                 Text(text = "⚙", fontSize = 18.sp)
@@ -262,13 +220,8 @@ private fun BoxScope.ModeSelector(state: CameraUiState, vm: CameraViewModel) {
                 modifier = Modifier
                     .padding(horizontal = 8.dp)
                     .clip(RoundedCornerShape(20.dp))
-                    .background(
-                        if (selected) Color(0xFFFFD600) else Color.White.copy(alpha = 0.15f)
-                    )
-                    .clickable {
-                        vm.setMode(mode)
-                        vm.setAutoMode(false)
-                    }
+                    .background(if (selected) Color(0xFFFFD600) else Color.White.copy(alpha = 0.15f))
+                    .clickable { vm.setMode(mode); vm.setAutoMode(false) }
                     .padding(horizontal = 14.dp, vertical = 6.dp)
             ) {
                 Text(
@@ -292,13 +245,13 @@ private fun BoxScope.BottomControls(state: CameraUiState, vm: CameraViewModel) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Gallery thumb
         Box(
             modifier = Modifier
                 .size(52.dp)
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color.White.copy(alpha = 0.15f))
-                .clickable { vm.navigate(AppScreen.GALLERY) }
+                .clickable { vm.navigate(AppScreen.GALLERY) },
+            contentAlignment = Alignment.Center
         ) {
             state.recentCaptures.lastOrNull()?.let { bmp ->
                 Image(
@@ -307,14 +260,9 @@ private fun BoxScope.BottomControls(state: CameraUiState, vm: CameraViewModel) {
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
-            } ?: Text(
-                text = "🖼",
-                modifier = Modifier.align(Alignment.Center),
-                fontSize = 22.sp
-            )
+            } ?: Text(text = "🖼", fontSize = 22.sp)
         }
 
-        // Shutter
         Box(
             modifier = Modifier
                 .size(76.dp)
@@ -324,22 +272,12 @@ private fun BoxScope.BottomControls(state: CameraUiState, vm: CameraViewModel) {
             contentAlignment = Alignment.Center
         ) {
             if (state.isCapturing) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(32.dp),
-                    color = Color.Black,
-                    strokeWidth = 3.dp
-                )
+                CircularProgressIndicator(modifier = Modifier.size(32.dp), color = Color.Black, strokeWidth = 3.dp)
             } else {
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(CircleShape)
-                        .border(3.dp, Color.Black, CircleShape)
-                )
+                Box(modifier = Modifier.size(64.dp).clip(CircleShape).border(3.dp, Color.Black, CircleShape))
             }
         }
 
-        // Flip camera
         GlassPill(modifier = Modifier.size(52.dp)) {
             IconButton(onClick = { vm.flipCamera() }) {
                 Text(text = "🔄", fontSize = 22.sp)
@@ -351,9 +289,7 @@ private fun BoxScope.BottomControls(state: CameraUiState, vm: CameraViewModel) {
 @Composable
 private fun BoxScope.ExposureSlider(state: CameraUiState, vm: CameraViewModel) {
     Column(
-        modifier = Modifier
-            .align(Alignment.CenterEnd)
-            .padding(end = 12.dp),
+        modifier = Modifier.align(Alignment.CenterEnd).padding(end = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         GlassPanel(cornerRadius = 32.dp) {
@@ -367,10 +303,7 @@ private fun BoxScope.ExposureSlider(state: CameraUiState, vm: CameraViewModel) {
                     value = state.exposureIndex.toFloat(),
                     onValueChange = { vm.setExposure(it.toInt()) },
                     valueRange = state.exposureMin.toFloat()..state.exposureMax.toFloat(),
-                    modifier = Modifier
-                        .height(140.dp)
-                        .rotate(-90f)
-                        .width(140.dp),
+                    modifier = Modifier.height(140.dp).rotate(-90f).width(140.dp),
                     colors = SliderDefaults.colors(
                         thumbColor = Color(0xFFFFD600),
                         activeTrackColor = Color(0xFFFFD600)
@@ -379,18 +312,13 @@ private fun BoxScope.ExposureSlider(state: CameraUiState, vm: CameraViewModel) {
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
                     text = if (state.exposureIndex >= 0) "+${state.exposureIndex}" else "${state.exposureIndex}",
-                    color = Color.White,
-                    fontSize = 11.sp
+                    color = Color.White, fontSize = 11.sp
                 )
             }
         }
         Spacer(modifier = Modifier.height(8.dp))
         GlassPill {
-            Box(
-                modifier = Modifier
-                    .padding(8.dp)
-                    .clickable { vm.dismissExposureSlider() }
-            ) {
+            Box(modifier = Modifier.padding(8.dp).clickable { vm.dismissExposureSlider() }) {
                 Text(text = "✕", color = Color.White, fontSize = 14.sp)
             }
         }
@@ -399,23 +327,15 @@ private fun BoxScope.ExposureSlider(state: CameraUiState, vm: CameraViewModel) {
 
 @Composable
 private fun BoxScope.TimerOverlay(countdown: Int) {
-    val scale by animateFloatAsState(
-        targetValue = 1f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
-        label = "timer_scale"
-    )
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.4f)),
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.4f)),
         contentAlignment = Alignment.Center
     ) {
         Text(
             text = "$countdown",
             color = Color.White,
             fontSize = 96.sp,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.graphicsLayer { scaleX = scale; scaleY = scale }
+            fontWeight = FontWeight.Bold
         )
     }
 }
@@ -433,20 +353,10 @@ private fun BoxScope.CapturePreviewOverlay(bitmap: Bitmap, vm: CameraViewModel) 
             bitmap = bitmap.asImageBitmap(),
             contentDescription = null,
             contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxWidth(0.92f)
-                .clip(RoundedCornerShape(20.dp))
+            modifier = Modifier.fillMaxWidth(0.92f).clip(RoundedCornerShape(20.dp))
         )
-        GlassPill(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(24.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .clickable { vm.dismissPreview() }
-            ) {
+        GlassPill(modifier = Modifier.align(Alignment.TopEnd).padding(24.dp)) {
+            Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).clickable { vm.dismissPreview() }) {
                 Text(text = "✕", color = Color.White, fontSize = 18.sp)
             }
         }
@@ -456,9 +366,7 @@ private fun BoxScope.CapturePreviewOverlay(bitmap: Bitmap, vm: CameraViewModel) 
 @Composable
 private fun BoxScope.StylePadOverlay(state: CameraUiState, vm: CameraViewModel) {
     Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)),
         contentAlignment = Alignment.Center
     ) {
         GlassPanel {
@@ -466,24 +374,16 @@ private fun BoxScope.StylePadOverlay(state: CameraUiState, vm: CameraViewModel) 
                 modifier = Modifier.padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Text(
-                    text = "Estilo Fotográfico",
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Text(text = "Estilo Fotográfico", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Presets
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(StyleProcessor.PRESETS.keys.toList()) { name ->
                         val selected = state.selectedPreset == name
                         Box(
                             modifier = Modifier
                                 .clip(RoundedCornerShape(16.dp))
-                                .background(
-                                    if (selected) Color(0xFFFFD600) else Color.White.copy(alpha = 0.15f)
-                                )
+                                .background(if (selected) Color(0xFFFFD600) else Color.White.copy(alpha = 0.15f))
                                 .clickable { vm.selectPreset(name) }
                                 .padding(horizontal = 12.dp, vertical = 6.dp)
                         ) {
@@ -499,74 +399,68 @@ private fun BoxScope.StylePadOverlay(state: CameraUiState, vm: CameraViewModel) 
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // 2D pad
+                val padSizePx = 220f
                 Box(
                     modifier = Modifier
-                        .size(220.dp)
+                        .size(padSizePx.dp)
                         .clip(RoundedCornerShape(16.dp))
                         .background(Color.White.copy(alpha = 0.08f))
                         .border(1.dp, Color.White.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
-                        .pointerInput(Unit) {
+                        .pointerInput(state.style) {
                             detectTapGestures { offset ->
-                                val px = (offset.x / size.width).coerceIn(0f, 1f)
-                                val py = (1f - offset.y / size.height).coerceIn(0f, 1f)
-                                vm.setStyle(StyleProcessor.StylePoint(px * 2f - 1f, py * 2f - 1f))
+                                val nx = (offset.x / size.width).coerceIn(0f, 1f)
+                                val ny = (1f - offset.y / size.height).coerceIn(0f, 1f)
+                                vm.setStyle(StyleProcessor.StylePoint(nx * 2f - 1f, ny * 2f - 1f))
                             }
                         }
-                        .pointerInput(Unit) {
+                        .pointerInput(state.style) {
                             detectTransformGestures { _, pan, _, _ ->
-                                val nx = (state.style.x / 2f + 0.5f + pan.x / size.width).coerceIn(0f, 1f)
-                                val ny = (state.style.y / 2f + 0.5f + pan.y / size.height).coerceIn(0f, 1f)
+                                val curX = state.style.x / 2f + 0.5f
+                                val curY = state.style.y / 2f + 0.5f
+                                val nx = (curX + pan.x / size.width).coerceIn(0f, 1f)
+                                val ny = (curY - pan.y / size.height).coerceIn(0f, 1f)
                                 vm.setStyle(StyleProcessor.StylePoint(nx * 2f - 1f, ny * 2f - 1f))
                             }
                         }
                 ) {
-                    // Grid lines
-                    Canvas(modifier = Modifier.fillMaxSize()) { }
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        // grid lines
+                        val step = size.width / 4f
+                        for (i in 1..3) {
+                            drawLine(Color.White.copy(alpha = 0.1f),
+                                androidx.compose.ui.geometry.Offset(step * i, 0f),
+                                androidx.compose.ui.geometry.Offset(step * i, size.height), strokeWidth = 1f)
+                            drawLine(Color.White.copy(alpha = 0.1f),
+                                androidx.compose.ui.geometry.Offset(0f, step * i),
+                                androidx.compose.ui.geometry.Offset(size.width, step * i), strokeWidth = 1f)
+                        }
+                        // dot
+                        val dotCx = (state.style.x / 2f + 0.5f) * size.width
+                        val dotCy = (1f - (state.style.y / 2f + 0.5f)) * size.height
+                        drawCircle(color = Color(0xFFFFD600), radius = 12f,
+                            center = androidx.compose.ui.geometry.Offset(dotCx, dotCy))
+                        drawCircle(color = Color.White, radius = 12f,
+                            center = androidx.compose.ui.geometry.Offset(dotCx, dotCy),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
+                    }
 
-                    // Dot
-                    val dotX = (state.style.x / 2f + 0.5f) * 220
-                    val dotY = (1f - (state.style.y / 2f + 0.5f)) * 220
-                    Box(
-                        modifier = Modifier
-                            .offset(x = (dotX - 10).dp, y = (dotY - 10).dp)
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFFFFD600))
-                            .border(2.dp, Color.White, CircleShape)
-                    )
-
-                    Text(
-                        text = "Vivid →",
-                        color = Color.White.copy(alpha = 0.4f),
-                        fontSize = 10.sp,
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp)
-                    )
-                    Text(
-                        text = "Warm ↑",
-                        color = Color.White.copy(alpha = 0.4f),
-                        fontSize = 10.sp,
-                        modifier = Modifier.align(Alignment.TopStart).padding(6.dp)
-                    )
+                    Text(text = "Vivid →", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp))
+                    Text(text = "Warm ↑", color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp,
+                        modifier = Modifier.align(Alignment.TopStart).padding(6.dp))
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     GlassPill {
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                .clickable { vm.selectPreset("Standard") }
-                        ) {
+                        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            .clickable { vm.selectPreset("Standard") }) {
                             Text(text = "Reset", color = Color.White, fontSize = 13.sp)
                         }
                     }
                     GlassPill {
-                        Box(
-                            modifier = Modifier
-                                .padding(horizontal = 16.dp, vertical = 8.dp)
-                                .clickable { vm.toggleStylePad() }
-                        ) {
+                        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            .clickable { vm.toggleStylePad() }) {
                             Text(text = "Fechar", color = Color.White, fontSize = 13.sp)
                         }
                     }
