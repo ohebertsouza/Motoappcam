@@ -2,118 +2,84 @@ package com.hebert.motocamera.processing
 
 import android.graphics.Bitmap
 import android.graphics.Color
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import kotlin.math.exp
-import kotlin.math.pow
 
-/**
- * Mertens exposure fusion: blends under/normal/over-exposed frames
- * using per-pixel weights (contrast + saturation + well-exposedness).
- */
 object HDRProcessor {
 
-    suspend fun process(underExp: Bitmap, normal: Bitmap, overExp: Bitmap): Bitmap =
-        withContext(Dispatchers.Default) {
-            val frames = listOf(underExp, normal, overExp)
-            val width = normal.width
-            val height = normal.height
+    fun process(frames: List<Bitmap>): Bitmap {
+        if (frames.isEmpty()) throw IllegalArgumentException("No frames")
+        if (frames.size == 1) return frames[0]
 
-            val pixels = frames.map { bm ->
-                Array(height) { y -> IntArray(width) { x -> bm.getPixel(x, y) } }
-            }
+        val w = frames[0].width
+        val h = frames[0].height
+        val total = w * h
 
-            val weights = frames.mapIndexed { i, _ ->
-                computeWeights(pixels[i], width, height)
-            }
+        val accR = FloatArray(total)
+        val accG = FloatArray(total)
+        val accB = FloatArray(total)
+        val accW = FloatArray(total)
 
-            // Normalize weights per pixel
-            val result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val px = IntArray(total)
 
-            for (y in 0 until height) {
-                for (x in 0 until width) {
-                    val totalW = weights.sumOf { it[y][x].toDouble() }.toFloat().coerceAtLeast(1e-6f)
-                    var rAcc = 0f; var gAcc = 0f; var bAcc = 0f
+        for (frame in frames) {
+            val f = if (frame.width != w || frame.height != h)
+                Bitmap.createScaledBitmap(frame, w, h, true) else frame
+            f.getPixels(px, 0, w, 0, 0, w, h)
 
-                    for (i in frames.indices) {
-                        val w = weights[i][y][x] / totalW
-                        val px = pixels[i][y][x]
-                        rAcc += Color.red(px) * w
-                        gAcc += Color.green(px) * w
-                        bAcc += Color.blue(px) * w
-                    }
+            for (i in 0 until total) {
+                val r = Color.red(px[i]) / 255f
+                val g = Color.green(px[i]) / 255f
+                val b = Color.blue(px[i]) / 255f
 
-                    result.setPixel(
-                        x, y,
-                        Color.rgb(
-                            rAcc.toInt().coerceIn(0, 255),
-                            gAcc.toInt().coerceIn(0, 255),
-                            bAcc.toInt().coerceIn(0, 255)
-                        )
-                    )
-                }
-            }
+                val lum = 0.299f * r + 0.587f * g + 0.114f * b
 
-            applyHDRToneMap(result)
-        }
+                // Well-exposedness weight (peaks at 0.5)
+                val we = gaussian(lum, 0.5f, 0.2f)
 
-    private fun computeWeights(pixels: Array<IntArray>, width: Int, height: Int): Array<FloatArray> {
-        val w = Array(height) { FloatArray(width) }
-
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val px = pixels[y][x]
-                val r = Color.red(px) / 255f
-                val g = Color.green(px) / 255f
-                val b = Color.blue(px) / 255f
-
-                val wellExp = gaussianWeight(r) * gaussianWeight(g) * gaussianWeight(b)
-
+                // Saturation weight
                 val mean = (r + g + b) / 3f
-                val saturation = maxOf(r, g, b) - minOf(r, g, b)
-
-                val contrast = if (y in 1 until height - 1 && x in 1 until width - 1) {
-                    val neighbors = listOf(pixels[y - 1][x], pixels[y + 1][x], pixels[y][x - 1], pixels[y][x + 1])
-                    val lum = { c: Int -> (Color.red(c) * 0.299f + Color.green(c) * 0.587f + Color.blue(c) * 0.114f) / 255f }
-                    neighbors.sumOf { (lum(it) - mean).toDouble().pow(2.0) }.toFloat()
-                } else 0f
-
-                w[y][x] = (wellExp + 0.01f) * (saturation + 0.01f) * (contrast + 0.01f)
-            }
-        }
-
-        return w
-    }
-
-    private fun gaussianWeight(v: Float, mu: Float = 0.5f, sigma: Float = 0.2f): Float =
-        exp(-((v - mu).pow(2) / (2 * sigma.pow(2)))).toFloat()
-
-    /** S-curve tone mapping for punchy HDR look */
-    private fun applyHDRToneMap(bitmap: Bitmap): Bitmap {
-        val lut = IntArray(256) { i ->
-            val v = i / 255f
-            val mapped = sCurve(v)
-            (mapped * 255).toInt().coerceIn(0, 255)
-        }
-
-        val result = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
-        for (y in 0 until bitmap.height) {
-            for (x in 0 until bitmap.width) {
-                val px = bitmap.getPixel(x, y)
-                result.setPixel(
-                    x, y,
-                    Color.rgb(lut[Color.red(px)], lut[Color.green(px)], lut[Color.blue(px)])
+                val sat = kotlin.math.sqrt(
+                    ((r - mean) * (r - mean) + (g - mean) * (g - mean) + (b - mean) * (b - mean)) / 3f
                 )
+
+                val w = (we * (sat + 0.01f)).coerceAtLeast(1e-6f)
+
+                accR[i] += r * w
+                accG[i] += g * w
+                accB[i] += b * w
+                accW[i] += w
             }
         }
-        return result
+
+        val lut = buildSCurveLut()
+        val result = IntArray(total)
+
+        for (i in 0 until total) {
+            val wt = accW[i].coerceAtLeast(1e-6f)
+            val ri = (accR[i] / wt * 255f).toInt().coerceIn(0, 255)
+            val gi = (accG[i] / wt * 255f).toInt().coerceIn(0, 255)
+            val bi = (accB[i] / wt * 255f).toInt().coerceIn(0, 255)
+            result[i] = Color.rgb(lut[ri], lut[gi], lut[bi])
+        }
+
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        out.setPixels(result, 0, w, 0, 0, w, h)
+        return out
     }
 
-    private fun sCurve(v: Float): Float {
-        return if (v < 0.5f) {
-            2f * v * v
-        } else {
-            1f - (-2f * v + 2f).pow(2) / 2f
+    private fun gaussian(x: Float, mu: Float, sigma: Float): Float {
+        val d = (x - mu) / sigma
+        return kotlin.math.exp(-0.5f * d * d)
+    }
+
+    private fun buildSCurveLut(): IntArray {
+        val lut = IntArray(256)
+        for (i in 0..255) {
+            val t = i / 255f
+            // S-curve: shadows lifted, highlights punchy
+            val s = t * t * (3f - 2f * t)
+            val blended = t * 0.4f + s * 0.6f
+            lut[i] = (blended * 255f).toInt().coerceIn(0, 255)
         }
+        return lut
     }
 }
