@@ -31,9 +31,9 @@ object NightModeProcessor {
                 for (x in 0 until width) {
                     val px = scaled.getPixel(x, y)
                     val idx = y * width + x
-                    accR[idx] += Color.red(px)
-                    accG[idx] += Color.green(px)
-                    accB[idx] += Color.blue(px)
+                    accR[idx] += Color.red(px).toFloat()
+accG[idx] += Color.green(px).toFloat()
+accB[idx] += Color.blue(px).toFloat()
                 }
             }
         }
