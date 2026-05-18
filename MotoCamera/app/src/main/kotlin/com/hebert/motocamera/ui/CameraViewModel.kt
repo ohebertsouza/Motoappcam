@@ -140,7 +140,13 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             showFocusRing = true
         )
         viewModelScope.launch {
-            delay(1800)
+            // Aguarda AE estabilizar depois do foco (~800ms) e lê o EV real da câmera
+            delay(800)
+            val newEv = cameraController.getCurrentExposureIndex()
+            if (newEv != null) {
+                _state.value = _state.value.copy(exposureIndex = newEv)
+            }
+            delay(1000)
             _state.value = _state.value.copy(showFocusRing = false)
         }
     }
