@@ -28,46 +28,44 @@ object StyleProcessor {
             applyLUT(bitmap, lut)
         }
 
-    private fun buildLUT(style: StylePoint): Array<IntArray> {
-        val tone = style.tone
-        val mood = style.mood
+   private fun buildLUT(style: StylePoint): Array<IntArray> {
+    val tone = style.tone
+    val mood = style.mood
 
-        val rLUT = IntArray(256)
-        val gLUT = IntArray(256)
-        val bLUT = IntArray(256)
+    val rLUT = IntArray(256)
+    val gLUT = IntArray(256)
+    val bLUT = IntArray(256)
 
-        for (i in 0..255) {
-            val v = i / 255f
-            val vMid = v - 0.5f
+    for (i in 0..255) {
+        val v = i / 255f
 
-            // Tone: temperatura de cor
-            // Positivo = quente (mais vermelho/amarelo), negativo = frio (mais azul/ciano)
-            val warmR = if (tone > 0) tone * 0.08f else 0f
-            val warmB = if (tone < 0) -tone * 0.08f else 0f
-            val warmG = tone * 0.02f
+        // Tone: temperatura de cor apenas
+        // Positivo = quente (vermelho/amarelo), negativo = frio (azul/ciano)
+        val warmR = if (tone > 0) tone * 0.08f else 0f
+        val warmB = if (tone < 0) -tone * 0.08f else 0f
+        val warmG = tone * 0.02f
 
-            // Mood: vivid empurra saturação, muted puxa pra luminância
-            val vividPush = if (mood > 0) mood * 0.12f * vMid else 0f
-            val mutedPull = if (mood < 0) -mood * 0.30f else 0f
+        // Mood: só muting (negativo) — sem boost de saturação
+        val mutedPull = if (mood < 0) -mood * 0.30f else 0f
 
-            var r = (v + warmR + vividPush).coerceIn(0f, 1f)
-            var g = (v + warmG + vividPush * 0.85f).coerceIn(0f, 1f)
-            var b = (v + warmB - vividPush * 0.4f).coerceIn(0f, 1f)
+        var r = (v + warmR).coerceIn(0f, 1f)
+        var g = (v + warmG).coerceIn(0f, 1f)
+        var b = (v + warmB).coerceIn(0f, 1f)
 
-            if (mutedPull > 0f) {
-                val lum = r * 0.299f + g * 0.587f + b * 0.114f
-                r = (r + (lum - r) * mutedPull).coerceIn(0f, 1f)
-                g = (g + (lum - g) * mutedPull).coerceIn(0f, 1f)
-                b = (b + (lum - b) * mutedPull).coerceIn(0f, 1f)
-            }
-
-            rLUT[i] = (r * 255).toInt().coerceIn(0, 255)
-            gLUT[i] = (g * 255).toInt().coerceIn(0, 255)
-            bLUT[i] = (b * 255).toInt().coerceIn(0, 255)
+        if (mutedPull > 0f) {
+            val lum = r * 0.299f + g * 0.587f + b * 0.114f
+            r = (r + (lum - r) * mutedPull).coerceIn(0f, 1f)
+            g = (g + (lum - g) * mutedPull).coerceIn(0f, 1f)
+            b = (b + (lum - b) * mutedPull).coerceIn(0f, 1f)
         }
 
-        return arrayOf(rLUT, gLUT, bLUT)
+        rLUT[i] = (r * 255).toInt().coerceIn(0, 255)
+        gLUT[i] = (g * 255).toInt().coerceIn(0, 255)
+        bLUT[i] = (b * 255).toInt().coerceIn(0, 255)
     }
+
+    return arrayOf(rLUT, gLUT, bLUT)
+}
 
     private fun applyLUT(bitmap: Bitmap, lut: Array<IntArray>): Bitmap {
         val width = bitmap.width
