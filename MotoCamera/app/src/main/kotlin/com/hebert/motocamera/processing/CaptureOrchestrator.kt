@@ -4,9 +4,9 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaScannerConnection
 import android.os.Environment
-import androidx.core.content.ContextCompat
 import com.hebert.motocamera.camera.CameraController
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -54,9 +54,26 @@ class CaptureOrchestrator(
     }
 
     private suspend fun captureHDR(): Bitmap {
+        val savedEv = cameraController.getCurrentExposureIndex() ?: 0
+
+        // Dark frame: underexpose
+        cameraController.applyExposureCompensation(-2)
+        delay(350)
+        val dark = captureSingle()
+
+        // Normal frame
+        cameraController.applyExposureCompensation(savedEv)
+        delay(350)
         val normal = captureSingle()
-        val dark = withContext(Dispatchers.Default) { BitmapUtils.adjustExposure(normal, 0.5f) }
-        val bright = withContext(Dispatchers.Default) { BitmapUtils.adjustExposure(normal, 1.8f) }
+
+        // Bright frame: overexpose
+        cameraController.applyExposureCompensation(2)
+        delay(350)
+        val bright = captureSingle()
+
+        // Restore original EV
+        cameraController.applyExposureCompensation(savedEv)
+
         return withContext(Dispatchers.Default) {
             HDRProcessor.process(listOf(dark, normal, bright))
         }
