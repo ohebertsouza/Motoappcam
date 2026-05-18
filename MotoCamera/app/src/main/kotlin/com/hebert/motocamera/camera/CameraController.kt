@@ -19,6 +19,7 @@ import androidx.lifecycle.LifecycleOwner
 import com.hebert.motocamera.processing.CaptureMode
 import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.Executor
+import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -27,7 +28,7 @@ enum class WhiteBalance(val awbMode: Int, val label: String) {
     SUNNY(CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT, "Sol"),
     CLOUDY(CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT, "Nublado"),
     INDOOR(CaptureRequest.CONTROL_AWB_MODE_INCANDESCENT, "Interno"),
-    FLUORESCENT(CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT, "Fluor.");
+    FLUORESCENT(CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT, "Fluor.")
 }
 
 enum class CaptureResolution(val label: String, val targetSize: Size) {
@@ -51,6 +52,8 @@ class CameraController(private val context: Context) {
     val portraitAnalyzer = LivePortraitAnalyzer()
     private var currentAnalysis: ImageAnalysis? = null
 
+    private val backgroundExecutor: Executor = Executors.newSingleThreadExecutor()
+
     suspend fun bindCamera(
         lifecycleOwner: LifecycleOwner,
         previewView: PreviewView,
@@ -68,40 +71,29 @@ class CameraController(private val context: Context) {
                 AspectRatioStrategy(aspectRatio.ratio, AspectRatioStrategy.FALLBACK_RULE_AUTO)
             )
             .setResolutionStrategy(
-                ResolutionStrategy(
-                    resolution.targetSize,
-                    ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
-                )
+                ResolutionStrategy(resolution.targetSize, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)
             )
             .build()
 
         val previewBuilder = Preview.Builder().setResolutionSelector(resolutionSelector)
 
-        val sCurve = floatArrayOf(
-            0f, 0f, 0.1f, 0.08f, 0.25f, 0.22f,
-            0.5f, 0.54f, 0.75f, 0.82f, 0.9f, 0.95f, 1f, 1f
-        )
+        val sCurve = floatArrayOf(0f,0f, 0.1f,0.08f, 0.25f,0.22f, 0.5f,0.54f, 0.75f,0.82f, 0.9f,0.95f, 1f,1f)
         try {
             Camera2Interop.Extender(previewBuilder)
-                .setCaptureRequestOption(
-                    CaptureRequest.TONEMAP_MODE,
-                    CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE
-                )
-                .setCaptureRequestOption(
-                    CaptureRequest.TONEMAP_CURVE,
-                    TonemapCurve(sCurve, sCurve, sCurve)
-                )
+                .setCaptureRequestOption(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
+                .setCaptureRequestOption(CaptureRequest.TONEMAP_CURVE, TonemapCurve(sCurve, sCurve, sCurve))
         } catch (e: Exception) { }
 
         val preview = previewBuilder.build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
         }
 
-        imageCapture = ImageCapture.Builder()
+        val captureBuilder = ImageCapture.Builder()
             .setResolutionSelector(resolutionSelector)
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
             .setJpegQuality(97)
-            .build()
+
+        imageCapture = captureBuilder.build()
 
         val analysis = ImageAnalysis.Builder()
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -114,8 +106,10 @@ class CameraController(private val context: Context) {
     }
 
     fun switchToPortraitAnalyzer(portrait: Boolean) {
+        // Portrait analyzer runs on background thread to avoid blocking UI
+        val executor = if (portrait) backgroundExecutor else ContextCompat.getMainExecutor(context)
         val analyzer = if (portrait) portraitAnalyzer else sceneAnalyzer
-        currentAnalysis?.setAnalyzer(ContextCompat.getMainExecutor(context), analyzer)
+        currentAnalysis?.setAnalyzer(executor, analyzer)
     }
 
     fun applyModeSettings(mode: CaptureMode) {
@@ -155,9 +149,12 @@ class CameraController(private val context: Context) {
         camera?.cameraControl?.setExposureCompensationIndex(ev)
     }
 
+    fun getCurrentExposureIndex(): Int? {
+        return camera?.cameraInfo?.exposureState?.exposureCompensationIndex
+    }
+
     fun getExposureRange(): Range<Int>? {
-        val cam = camera ?: return null
-        return cam.cameraInfo.exposureState.exposureCompensationRange
+        return camera?.cameraInfo?.exposureState?.exposureCompensationRange
     }
 
     fun setZoom(ratio: Float) {
@@ -169,12 +166,11 @@ class CameraController(private val context: Context) {
     }
 
     fun tapToFocus(x: Float, y: Float, surfaceWidth: Int, surfaceHeight: Int) {
-        val factory = SurfaceOrientedMeteringPointFactory(
-            surfaceWidth.toFloat(), surfaceHeight.toFloat()
-        )
-        val point = factory.createPoint(x * surfaceWidth, y * surfaceHeight)
+        val factory = SurfaceOrientedMeteringPointFactory(surfaceWidth.toFloat(), surfaceHeight.toFloat())
+        val point = factory.createPoint(x, y)
         val action = FocusMeteringAction.Builder(point)
             .addPoint(point, FocusMeteringAction.FLAG_AE)
+            .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS)
             .build()
         camera?.cameraControl?.startFocusAndMetering(action)
     }
@@ -191,10 +187,7 @@ class CameraController(private val context: Context) {
     private suspend fun getCameraProvider(): ProcessCameraProvider =
         suspendCancellableCoroutine { cont ->
             ProcessCameraProvider.getInstance(context).also { future ->
-                future.addListener(
-                    { cont.resume(future.get()) },
-                    ContextCompat.getMainExecutor(context)
-                )
+                future.addListener({ cont.resume(future.get()) }, ContextCompat.getMainExecutor(context))
             }
         }
 }
