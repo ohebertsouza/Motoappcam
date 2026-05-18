@@ -2,7 +2,6 @@ package com.hebert.motocamera.camera
 
 import android.content.Context
 import android.hardware.camera2.CaptureRequest
-import android.hardware.camera2.params.TonemapCurve
 import android.util.Range
 import android.util.Size
 import androidx.camera.camera2.interop.Camera2CameraControl
@@ -77,12 +76,10 @@ class CameraController(private val context: Context) {
 
         val previewBuilder = Preview.Builder().setResolutionSelector(resolutionSelector)
 
-        val sCurve = floatArrayOf(0f,0f, 0.1f,0.08f, 0.25f,0.22f, 0.5f,0.54f, 0.75f,0.82f, 0.9f,0.95f, 1f,1f)
-        try {
-            Camera2Interop.Extender(previewBuilder)
-                .setCaptureRequestOption(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
-                .setCaptureRequestOption(CaptureRequest.TONEMAP_CURVE, TonemapCurve(sCurve, sCurve, sCurve))
-        } catch (e: Exception) { }
+       try {
+    Camera2Interop.Extender(previewBuilder)
+        .setCaptureRequestOption(CaptureRequest.TONEMAP_MODE, CaptureRequest.TONEMAP_MODE_HIGH_QUALITY)
+} catch (e: Exception) { }
 
         val preview = previewBuilder.build().also {
             it.setSurfaceProvider(previewView.surfaceProvider)
