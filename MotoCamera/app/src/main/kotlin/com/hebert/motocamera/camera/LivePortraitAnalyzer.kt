@@ -13,9 +13,13 @@ import com.google.mlkit.vision.segmentation.Segmentation
 import com.google.mlkit.vision.segmentation.SegmentationMask
 import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
 import com.hebert.motocamera.processing.PortraitProcessor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 
 class LivePortraitAnalyzer : ImageAnalysis.Analyzer {
@@ -25,6 +29,8 @@ class LivePortraitAnalyzer : ImageAnalysis.Analyzer {
             .setDetectorMode(SelfieSegmenterOptions.STREAM_MODE)
             .build()
     )
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val _frame = MutableStateFlow<Bitmap?>(null)
     val frame: StateFlow<Bitmap?> = _frame.asStateFlow()
@@ -37,10 +43,13 @@ class LivePortraitAnalyzer : ImageAnalysis.Analyzer {
     override fun analyze(image: ImageProxy) {
         val now = System.currentTimeMillis()
         if (now - lastMs < 100) {
-            if (cachedMask != null) {
+            val mask = cachedMask
+            if (mask != null) {
                 val bmp = image.toSmallBitmap()
                 if (bmp != null) {
-                    _frame.value = applyMask(bmp, cachedMask!!, cachedMaskW, cachedMaskH)
+                    scope.launch {
+                        _frame.value = applyMask(bmp, mask, cachedMaskW, cachedMaskH)
+                    }
                 }
             }
             image.close()
@@ -51,7 +60,10 @@ class LivePortraitAnalyzer : ImageAnalysis.Analyzer {
         val bitmap = image.toSmallBitmap()
         if (bitmap == null) { image.close(); return }
 
-        val mlImage = InputImage.fromBitmap(bitmap, image.imageInfo.rotationDegrees)
+        val rotation = image.imageInfo.rotationDegrees
+        image.close()
+
+        val mlImage = InputImage.fromBitmap(bitmap, rotation)
         segmenter.process(mlImage)
             .addOnSuccessListener { mask: SegmentationMask ->
                 val buf = mask.buffer
@@ -63,11 +75,11 @@ class LivePortraitAnalyzer : ImageAnalysis.Analyzer {
                 cachedMask = maskArr
                 cachedMaskW = mW
                 cachedMaskH = mH
-                _frame.value = applyMask(bitmap, maskArr, mW, mH)
+                scope.launch {
+                    _frame.value = applyMask(bitmap, maskArr, mW, mH)
+                }
             }
             .addOnFailureListener { }
-
-        image.close()
     }
 
     private fun applyMask(bitmap: Bitmap, mask: FloatArray, mW: Int, mH: Int): Bitmap {
@@ -105,23 +117,55 @@ class LivePortraitAnalyzer : ImageAnalysis.Analyzer {
 
     private fun ImageProxy.toSmallBitmap(): Bitmap? {
         return try {
-            val yBuffer = planes[0].buffer
-            val uBuffer = planes[1].buffer
-            val vBuffer = planes[2].buffer
-            val ySize = yBuffer.remaining()
-            val uSize = uBuffer.remaining()
-            val vSize = vBuffer.remaining()
-            val nv21 = ByteArray(ySize + uSize + vSize)
-            yBuffer.get(nv21, 0, ySize)
-            vBuffer.get(nv21, ySize, vSize)
-            uBuffer.get(nv21, ySize + vSize, uSize)
+            val yPlane = planes[0]
+            val uPlane = planes[1]
+            val vPlane = planes[2]
+
+            val yBuf = yPlane.buffer
+            val uBuf = uPlane.buffer
+            val vBuf = vPlane.buffer
+
+            val ySize = width * height
+            val uvPixelStride = uPlane.pixelStride
+
+            val nv21 = ByteArray(ySize + width * height / 2)
+
+            // Copy Y plane row by row (handle row stride padding)
+            val yRowStride = yPlane.rowStride
+            if (yRowStride == width) {
+                yBuf.get(nv21, 0, ySize)
+            } else {
+                var pos = 0
+                for (row in 0 until height) {
+                    yBuf.position(row * yRowStride)
+                    yBuf.get(nv21, pos, width)
+                    pos += width
+                }
+            }
+
+            // Interleave VU bytes (NV21 = Y + VU interleaved)
+            val uvRowStride = vPlane.rowStride
+            val uvHeight = height / 2
+            val uvWidth = width / 2
+            var pos = ySize
+            for (row in 0 until uvHeight) {
+                for (col in 0 until uvWidth) {
+                    val vIdx = row * uvRowStride + col * uvPixelStride
+                    val uIdx = row * uPlane.rowStride + col * uvPixelStride
+                    if (vIdx < vBuf.limit() && uIdx < uBuf.limit() && pos + 1 < nv21.size) {
+                        nv21[pos++] = vBuf.get(vIdx)
+                        nv21[pos++] = uBuf.get(uIdx)
+                    }
+                }
+            }
+
             val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
             val out = ByteArrayOutputStream()
             yuvImage.compressToJpeg(Rect(0, 0, width, height), 60, out)
             val bytes = out.toByteArray()
             val full = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
             val targetW = 320
-            val targetH = (height.toFloat() / width * targetW).toInt()
+            val targetH = (height.toFloat() / width * targetW).toInt().coerceAtLeast(1)
             Bitmap.createScaledBitmap(full, targetW, targetH, false)
         } catch (e: Exception) { null }
     }
